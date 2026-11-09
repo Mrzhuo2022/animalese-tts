@@ -142,6 +142,8 @@ export function scheduleUnits(events, units, { pitch = 1, speed = 1, bankHz = 36
   const rate0 = (420 * pitch) / bankHz;
   const random = () => Math.random();
   const now0 = 0.02;
+  // 限速与停顿都随语速倍率缩放：否则 UPS 硬下限会把 speed>1 完全盖掉
+  const rate = UPS * speed;
   let last = -Infinity;
   let end = 0;
   let gap = 0;
@@ -149,7 +151,7 @@ export function scheduleUnits(events, units, { pitch = 1, speed = 1, bankHz = 36
   const out = [];
   for (const ev of events) {
     if (ev.kind === 'pause') {
-      gap += PAUSE_GAP[ev.ch] ?? 0;
+      gap += (PAUSE_GAP[ev.ch] ?? 0) / speed;
       free = end + gap;
       continue;
     }
@@ -158,7 +160,7 @@ export function scheduleUnits(events, units, { pitch = 1, speed = 1, bankHz = 36
     const [off, lenRaw] = raw;
     const len = lenRaw / rate0;
     const now = now0 + ev.t0 / speed;
-    const t = Math.max(now, last + 1 / UPS, free);
+    const t = Math.max(now, last + 1 / rate, free);
     const lag = t - now;
     const isFinal = ev.pos >= ev.of - 2;
     if (!isFinal && lag > 2 * MAX_LAG) continue;
