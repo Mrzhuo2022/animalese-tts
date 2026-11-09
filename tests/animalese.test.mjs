@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { timeline, buildEvents, scheduleUnits } from '../src/engine.mjs';
 import { renderWav } from '../src/render.mjs';
+import { speech, models } from '../src/openai.mjs';
 
 const chars = new Map([
   ['你', ['ni', 3]],
@@ -47,4 +48,35 @@ test('renderWav: 输出合法 WAV 且非静音', () => {
     if (v > peak) peak = v;
   }
   assert.ok(peak > 1000, `峰值过低: ${peak}`);
+});
+
+test('openai 兼容: /v1/models 列表与 speech() wav/pcm/错误', async () => {
+  const m = models();
+  assert.equal(m.object, 'list');
+  assert.ok(m.data.length >= 1);
+
+  const wav = await speech({ model: 'tts-1', input: '你好', voice: 'shimmer', response_format: 'wav' });
+  assert.equal(wav.status, 200);
+  assert.equal(wav.contentType, 'audio/wav');
+  assert.equal(wav.body.toString('ascii', 8, 12), 'WAVE');
+  assert.ok(wav.unitCount >= 1);
+
+  // 默认 mp3：ffmpeg 可用则转码成功，不可用则回退 wav（x-animalese-format 标明）
+  const mp3 = await speech({ input: '你好' });
+  assert.equal(mp3.status, 200);
+  assert.ok(['mp3', 'wav'].includes(mp3.format), `格式异常: ${mp3.format}`);
+  assert.equal(mp3.contentType, mp3.format === 'mp3' ? 'audio/mpeg' : 'audio/wav');
+
+  const pcm = await speech({ input: '你好', response_format: 'pcm', speed: 1.5 });
+  assert.equal(pcm.contentType, 'audio/pcm; rate=24000');
+  assert.equal(pcm.body.length % 2, 0);
+  assert.ok(pcm.body.length > 1000, `pcm 太小: ${pcm.body.length}`);
+
+  const bad = await speech({ input: '' });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.contentType, 'application/json');
+  assert.ok(JSON.parse(bad.body.toString('utf8')).error.message);
+
+  const badFormat = await speech({ input: '你好', response_format: 'wma' });
+  assert.equal(badFormat.status, 400);
 });

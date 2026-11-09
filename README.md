@@ -17,6 +17,8 @@ node src/server.mjs          # http://127.0.0.1:7430（ANIMALESE_PORT 可改端�
 |---|---|---|
 | GET | `/api/tts?text=你好呀&pitch=1&speed=1` | 返回 `audio/wav`；`download=1` 带下载头 |
 | POST | `/api/tts` | JSON `{ text, pitch, speed }` |
+| POST | `/v1/audio/speech` | **OpenAI TTS 兼容**，见下 |
+| GET | `/v1/models` | OpenAI 兼容模型列表 |
 | GET | `/api/health` | 存活检查 |
 
 - `pitch`：声线倍率 0.6–1.6（基准 420Hz，越高越"幼"）
@@ -26,6 +28,32 @@ node src/server.mjs          # http://127.0.0.1:7430（ANIMALESE_PORT 可改端�
 ```bash
 curl -o out.wav "http://127.0.0.1:7430/api/tts?text=任务完成了！"
 ```
+
+### OpenAI TTS 兼容（/v1/audio/speech）
+
+任何支持 OpenAI TTS 接口的客户端，把 `base_url` 指到本服务即可用（`api_key` 随便填）：
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:7430/v1", api_key="anything")
+with client.audio.speech.with_streaming_response.create(
+    model="animalese-tts",          # 仅占位
+    input="任务完成了！",
+    voice="shimmer",                # 音色 → 音高预设
+    response_format="wav",          # wav / pcm 原生；mp3/opus/aac/flac 借 ffmpeg 转码
+    speed=1.0,
+) as r:
+    r.stream_to_file("out.wav")
+```
+
+- `voice`：`alloy/echo/fable/onyx/nova/shimmer` 映射到声线音高预设
+  （1.0 / 0.9 / 0.8 / 0.7 / 1.15 / 1.3，动物语不区分音色）；额外传 `pitch` 可直接指定倍率
+- `response_format`：默认 `mp3`（OpenAI 约定）。`wav`、`pcm`（24kHz s16le mono）原生输出；
+  `mp3/opus/aac/flac` 自动调 ffmpeg 转码，**ffmpeg 不在 PATH 时回退返回 wav**，
+  响应头 `x-animalese-format` 标明实际格式
+- `speed`：钳制到 0.5–2；`Authorization` 头忽略（本地服务无需鉴权）
+- 错误体为 OpenAI 风格 `{"error": {"message", "type", "code"}}`
 
 ## 原理
 

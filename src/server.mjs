@@ -3,6 +3,8 @@
  *   GET  /                     预览页
  *   GET  /api/tts?text=…       合成 → audio/wav（?pitch=&speed=&download=1）
  *   POST /api/tts {text,pitch,speed}
+ *   POST /v1/audio/speech      OpenAI TTS 兼容（src/openai.mjs）
+ *   GET  /v1/models            OpenAI 兼容模型列表
  *   GET  /api/health           存活检查
  */
 import { createServer } from 'node:http';
@@ -10,6 +12,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
 import { renderWav } from './render.mjs';
+import { speech, models } from './openai.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.ANIMALESE_PORT || 7430);
@@ -70,47 +73,75 @@ function serveStatic(res, urlPath) {
   res.end(body);
 }
 
-const server = createServer((req, res) => {
+/** 读取 JSON 请求体（64KB 上限，超限/解析失败已响应并返回 null） */
+async function readJson(req, res) {
+  const chunks = [];
+  let size = 0;
+  try {
+    for await (const c of req) {
+      size += c.length;
+      if (size > 64 * 1024) {
+        res.writeHead(413, { 'content-type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: '请求体过大' }));
+        req.destroy();
+        return null;
+      }
+      chunks.push(c);
+    }
+  } catch {
+    return null; // 客户端中断或 destroy 后的迭代错误
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+  } catch {
+    res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: 'JSON 解析失败' }));
+    return null;
+  }
+}
+
+const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
   res.setHeader('access-control-allow-origin', '*');
   res.setHeader('access-control-expose-headers', 'x-animalese-units');
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type' });
+    res.writeHead(204, { 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' });
     res.end();
     return;
   }
   if (url.pathname === '/api/tts') {
     if (req.method === 'POST') {
-      let body = '';
-      let tooLarge = false;
-      req.on('data', (c) => {
-        body += c;
-        if (body.length > 64 * 1024) {
-          tooLarge = true;
-          body = '';
-          res.writeHead(413, { 'content-type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({ error: '请求体过大' }));
-          req.destroy();
-        }
+      const j = await readJson(req, res);
+      if (!j) return;
+      const params = new URLSearchParams({
+        text: String(j.text ?? ''),
+        pitch: String(j.pitch ?? 1),
+        speed: String(j.speed ?? 1),
       });
-      req.on('end', () => {
-        try {
-          const j = JSON.parse(body || '{}');
-          const params = new URLSearchParams({
-            text: String(j.text ?? ''),
-            pitch: String(j.pitch ?? 1),
-            speed: String(j.speed ?? 1),
-          });
-          if (j.download) params.set('download', '1');
-          tts(req, res, params);
-        } catch {
-          res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
-          res.end(JSON.stringify({ error: 'JSON 解析失败' }));
-        }
-      });
+      if (j.download) params.set('download', '1');
+      tts(req, res, params);
       return;
     }
     tts(req, res, url.searchParams);
+    return;
+  }
+  if (url.pathname === '/v1/audio/speech' && req.method === 'POST') {
+    const j = await readJson(req, res);
+    if (!j) return;
+    const out = await speech(j);
+    res.writeHead(out.status, {
+      'content-type': out.contentType,
+      'content-length': out.body.length,
+      'cache-control': 'no-store',
+      'x-animalese-format': out.format,
+      'x-animalese-units': String(out.unitCount),
+    });
+    res.end(out.body);
+    return;
+  }
+  if (url.pathname === '/v1/models' && req.method === 'GET') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(models()));
     return;
   }
   if (url.pathname === '/api/health') {
