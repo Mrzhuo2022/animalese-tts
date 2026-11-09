@@ -1,0 +1,14 @@
+{
+  "name": "animalese-tts",
+  "version": "0.1.0",
+  "description": "动森式动物语 TTS：真人声音节采样库 + 调形曲线变调（零依赖 Node 服务 + 预览页）",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=21"
+  },
+  "license": "MIT"
+}

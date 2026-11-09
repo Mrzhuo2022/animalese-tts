@@ -1,0 +1,6 @@
+# 语音库重建缓存（原始 TTS 朗读 mp3，可随时重新生成）
+tools/.cache/
+
+# 系统/编辑器杂项
+Thumbs.db
+.DS_Store

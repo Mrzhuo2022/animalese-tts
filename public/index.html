@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>动森语音 TTS</title>
+<style>
+  :root {
+    --bg: #fff5f9; --panel: #ffffff; --line: #f6dfe9; --text: #5c4452;
+    --dim: #a08797; --accent: #ee85b1; --accent-strong: #f79cc4; --accent-ink: #fff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(160deg, #fff5f9, #fdeaf3); color: var(--text);
+    font: 14px/1.6 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  }
+  .card {
+    width: min(560px, 94vw); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 18px; padding: 26px 28px 22px; box-shadow: 0 12px 40px rgba(238,133,177,.18);
+  }
+  h1 { margin: 0 0 4px; font-size: 19px; letter-spacing: .04em; }
+  h1 .dot { color: var(--accent); }
+  .sub { margin: 0 0 18px; font-size: 12px; color: var(--dim); }
+  textarea {
+    width: 100%; height: 96px; resize: vertical; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 12px; background: #fffdfd; color: var(--text); font: inherit; outline: none;
+  }
+  textarea:focus { border-color: var(--accent); }
+  .row { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .row label { width: 64px; flex: none; font-size: 12.5px; color: var(--dim); }
+  .row input[type="range"] { flex: 1; accent-color: var(--accent); }
+  .row .val { width: 52px; text-align: right; font-size: 12px; color: var(--text-2, #82687a); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chips button {
+    border: 1px solid var(--line); background: #fff; color: var(--text); border-radius: 999px;
+    padding: 4px 12px; font-size: 12px; cursor: pointer;
+  }
+  .chips button:hover { border-color: var(--accent); color: var(--accent); }
+  .go {
+    margin-top: 18px; width: 100%; padding: 11px; border: none; border-radius: 12px; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); font: 600 14px/1 inherit; letter-spacing: .08em;
+  }
+  .go:disabled { opacity: .55; cursor: default; }
+  audio { width: 100%; margin-top: 16px; display: none; }
+  .dl { display: none; margin-top: 10px; font-size: 12.5px; color: var(--accent); }
+  .status { margin-top: 10px; font-size: 12px; color: var(--dim); min-height: 18px; }
+  footer { margin-top: 18px; font-size: 11px; color: var(--dim); line-height: 1.7; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>动森语音 <span class="dot">Animalese TTS</span></h1>
+    <p class="sub">动物之森式"动物语"合成：真人声音节采样 + 普通话调形曲线变调</p>
+    <textarea id="text" placeholder="输入要说的话，如：你好呀！今晚早点睡哦～">你好呀！</textarea>
+    <div class="chips">
+      <button data-t="你好呀！">你好呀！</button>
+      <button data-t="今晚早点睡哦～">今晚早点睡哦～</button>
+      <button data-t="你吃了吗？">你吃了吗？</button>
+      <button data-t="任务完成了！">任务完成了！</button>
+    </div>
+    <div class="row">
+      <label>声线音高</label>
+      <input id="pitch" type="range" min="0.7" max="1.5" step="0.05" value="1" />
+      <span class="val" id="pitchVal">1.00</span>
+    </div>
+    <div class="row">
+      <label>语速</label>
+      <input id="speed" type="range" min="0.5" max="2" step="0.05" value="1" />
+      <span class="val" id="speedVal">1.00</span>
+    </div>
+    <button class="go" id="go">合 成</button>
+    <audio id="player" controls></audio>
+    <a class="dl" id="dl" download="animalese.wav">下载 WAV</a>
+    <div class="status" id="status"></div>
+    <footer>
+      API：<code>GET /api/tts?text=你好呀&amp;pitch=1&amp;speed=1</code> 返回 audio/wav（curl 可直接用）。<br />
+      自建语音库（Edge TTS + PSOLA 压平），实现思路源自 ACNH 动物之森的"动物语"。
+    </footer>
+  </div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const status = $('status'), player = $('player'), dl = $('dl'), go = $('go');
+  let lastUrl = null;
+
+  $('pitch').addEventListener('input', (e) => ($('pitchVal').textContent = Number(e.target.value).toFixed(2)));
+  $('speed').addEventListener('input', (e) => ($('speedVal').textContent = Number(e.target.value).toFixed(2)));
+  document.querySelectorAll('.chips button').forEach((b) =>
+    b.addEventListener('click', () => ($('text').value = b.dataset.t)),
+  );
+
+  async function synth() {
+    const text = $('text').value.trim();
+    if (!text) { status.textContent = '先写点什么吧'; return; }
+    go.disabled = true;
+    status.textContent = '合成中…';
+    try {
+      const q = new URLSearchParams({ text, pitch: $('pitch').value, speed: $('speed').value });
+      const res = await fetch(`/api/tts?${q}`);
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (lastUrl) URL.revokeObjectURL(lastUrl);
+      lastUrl = URL.createObjectURL(blob);
+      player.src = lastUrl;
+      player.style.display = 'block';
+      await player.play().catch(() => {});
+      dl.href = lastUrl;
+      dl.style.display = 'inline-block';
+      status.textContent = `完成：${res.headers.get('x-animalese-units') || '?'} 个音节，${(blob.size / 1024).toFixed(0)} KB`;
+    } catch (e) {
+      status.textContent = `失败：${e.message || e}`;
+    } finally {
+      go.disabled = false;
+    }
+  }
+  go.addEventListener('click', synth);
+  $('text').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) synth();
+  });
+</script>
+</body>
+</html>
